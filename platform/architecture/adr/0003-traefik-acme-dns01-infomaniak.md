@@ -1,21 +1,22 @@
-# ADR 0003 : Traefik (edge) — certificats TLS via ACME DNS-01 (ClouDNS)
+# ADR 0003 : Traefik (edge) — certificats TLS via ACME DNS-01 (Infomaniak)
 
 ## État
 **Accepté** (2026-03-02)
 
 ## Contexte
-L’infrastructure expose des services applicatifs sur Internet via une passerelle publique (VPS en Suisse). Les workloads applicatifs (par exemple Matrix/Synapse) sont exécutés dans le lab et sont joints depuis le VPS via un tunnel WireGuard.
+L’infrastructure expose des services applicatifs sur Internet via une passerelle publique (VPS en Suisse).  
+Les workloads applicatifs (par exemple Matrix/Synapse) sont exécutés dans le lab et sont joints depuis le VPS via un tunnel WireGuard.
 
 L’émission et le renouvellement des certificats TLS doivent être automatisés, avec les objectifs suivants :
 - Centraliser la terminaison TLS sur le VPS (reverse proxy “edge”).
 - Réduire la dépendance à l’ouverture du port `80/tcp` pour les challenges ACME.
-- Permettre l’émission future de certificats wildcard (ex : `*.cozy-flaow.cloudns.org`).
+- Permettre l’émission future de certificats wildcard (ex : `*.example.net`).
 - Conserver une approche reproductible et auditable (“infra-as-code”).
 
-Le domaine public est géré via ClouDNS (`cozy-flaow.cloudns.org`), et les noms de services publics incluent `matrix.cozy-flaow.cloudns.org`.
+Le domaine public est géré chez **Infomaniak** (DNS). Les noms de services publics sont de la forme `service.example.net` (ex : `matrix.example.net`, `maintenance.example.net`).
 
 ## Décision
-Mettre en place Traefik sur le VPS en tant que reverse proxy edge, avec émission/renouvellement automatique des certificats Let’s Encrypt via ACME en utilisant le challenge **DNS-01** et le provider **ClouDNS**.
+Mettre en place **Traefik** sur le VPS en tant que reverse proxy edge, avec émission/renouvellement automatique des certificats **Let’s Encrypt** via **ACME** en utilisant le challenge **DNS-01** et le provider **Infomaniak**.
 
 ## Critères de décision
 - **Fiabilité** : capacité à obtenir/renouveler des certificats indépendamment de l’accessibilité du port `80/tcp`.
@@ -33,11 +34,12 @@ Mettre en place Traefik sur le VPS en tant que reverse proxy edge, avec émissio
 - Dépendance à l’ouverture et à l’accessibilité du port `80/tcp`.
 - Non compatible avec l’émission de certificats wildcard.
 
-### Option B — ACME DNS-01 via ClouDNS (retenue)
+### Option B — ACME DNS-01 via Infomaniak (retenue)
 **Motifs :**
 - Ne nécessite pas l’ouverture de `80/tcp` pour la validation ACME.
 - Compatible avec les certificats wildcard.
 - Alignée avec une approche edge et multi-services.
+- S’intègre bien dans un modèle “gateway unique” (VPS) + workloads privés (lab).
 
 ## Justification
 1. **Réduction de la dépendance réseau** : DNS-01 évite un prérequis strict sur l’accessibilité HTTP pendant la validation ACME.
@@ -54,20 +56,23 @@ Mettre en place Traefik sur le VPS en tant que reverse proxy edge, avec émissio
 - Architecture cohérente : exposition publique au VPS, workloads applicatifs isolés dans le lab via WireGuard.
 
 ### Négatives / risques
-- Nécessité de stocker des secrets ClouDNS sur le VPS.
+- Nécessité de stocker un secret API Infomaniak sur le VPS (accès DNS).
 - Risque opérationnel en cas de permissions API insuffisantes ou de propagation DNS lente.
 - Dépannage potentiellement plus complexe (dépendance au DNS provider).
 
 ### Mesures de mitigation (préconisées)
-- Utiliser un sous-utilisateur ClouDNS dédié avec droits minimaux (écriture TXT sur la zone).
+- Utiliser un token API dédié avec droits minimaux (gestion des enregistrements TXT nécessaires à `_acme-challenge`).
 - Stocker les secrets hors Git (fichier `.env` protégé, permissions strictes).
 - Protéger le fichier `acme.json` (permissions strictes, sauvegarde si nécessaire).
+- Forcer des résolveurs DNS publics pour les checks de propagation (éviter le DNS interne Docker `127.0.0.11`) et ajouter un délai de propagation :
+  - `delayBeforeCheck` (ex : 30s)
+  - `resolvers` (ex : `1.1.1.1:53,8.8.8.8:53`)
 - Ne pas exposer le dashboard Traefik publiquement.
 - Mettre en place une vérification périodique du renouvellement (logs/monitoring).
 
 ## Definition of Done (validation)
 - Traefik déployé sur le VPS.
-- Certificat Let’s Encrypt émis via DNS-01 pour `matrix.cozy-flaow.cloudns.org`.
+- Certificat Let’s Encrypt émis via DNS-01 pour `matrix.example.net` (et tout autre service public requis).
 - Renouvellement automatique fonctionnel (validation par logs Traefik et/ou observation d’un renouvellement).
-- Secrets ClouDNS stockés hors Git avec permissions strictes.
+- Secret Infomaniak stocké hors Git avec permissions strictes.
 - Runbook exécutable présent dans `platform/runbooks/`.

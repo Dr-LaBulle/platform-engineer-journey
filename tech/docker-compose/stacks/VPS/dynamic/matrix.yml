@@ -1,0 +1,30 @@
+http:
+  routers:
+    matrix:
+      rule: Host(`matrix.flaow.eu`)
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: le
+      service: synapse-svc
+      middlewares:
+        - matrix-fallback
+
+  services:
+    synapse-svc:
+      loadBalancer:
+        servers:
+          - url: "http://10.100.0.2:8008"
+
+    matrix-maintenance-svc:
+      loadBalancer:
+        servers:
+          - url: "http://gateway_maintenance:80"
+
+  middlewares:
+    matrix-fallback:
+      errors:
+        status:
+          - "500-599"
+        service: matrix-maintenance-svc
+        query: "/"

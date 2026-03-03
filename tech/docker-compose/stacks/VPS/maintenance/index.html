@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="refresh" content="300">
+    <title>Sovereign Bridge - Maintenance</title>
+    <style>
+        body { font-family: sans-serif; background: #1a1a1a; color: #eee; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .card { text-align: center; border: 1px solid #333; padding: 2rem; border-radius: 8px; background: #222; max-width: 820px; }
+        a { color: #00aaff; text-decoration: none; font-weight: bold; }
+        .status { color: #ff5555; }
+        .ok { color: #55ff55; }
+        code { background: #111; padding: 0.15rem 0.35rem; border-radius: 4px; }
+        .muted { opacity: 0.85; font-size: 0.95rem; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Sovereign Bridge</h1>
+        <p>Passerelle Suisse (CH) : <span class="ok">ACTIVE</span></p>
+        <p>Laboratoire Portugal (PT) : <span class="status">HORS-LIGNE</span></p>
+
+        <hr style="border: 0; border-top: 1px solid #333; margin: 1.5rem 0;">
+
+        <p>Ce projet (liaison CH↔PT, WireGuard + reverse proxy edge) est documenté sur GitHub :</p>
+        <p>
+          <a href="https://github.com/Dr-LaBulle/sovereign-hybrid-infra-showcase/">
+            Accéder à la documentation du projet ➔
+          </a>
+        </p>
+
+        <p class="muted">
+          Cette page se rafraîchit automatiquement toutes les 5 minutes.
+        </p>
+
+        <p class="muted">
+          Point d’entrée public : <code>matrix.flaow.eu</code>
+        </p>
+    </div>
+</body>
+</html>
