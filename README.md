@@ -1,4 +1,4 @@
-# Sovereign Hybrid Infra Showcase
+# Platform Engineer Journey
 **DevOps • Cloud Engineering • DevSecOps • Platform Engineering**
 
 **Owner:** @Dr-LaBulle  

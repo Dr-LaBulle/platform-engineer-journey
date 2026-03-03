@@ -1,4 +1,4 @@
-# Sovereign Hybrid Infra Showcase — Lab Hybride (Dépôt Vitrine)
+# Platform Engineer Journey — Lab Hybride (Dépôt Vitrine)
 **DevOps • Cloud Engineering • DevSecOps • Platform Engineering**
 
 **Owner :** @Dr-LaBulle  

@@ -11,7 +11,7 @@
 - Domaine : `example.net`
 - Service public Matrix/Synapse : `matrix.example.net`
 - Service public maintenance : `maintenance.example.net`
-- Dépôt GitHub (documentation) : https://github.com/Dr-LaBulle/sovereign-hybrid-infra-showcase/
+- Dépôt GitHub (documentation) : https://github.com/Dr-LaBulle/platform-engineer-journey/
 
 ## Pré-requis
 - Accès root sur le VPS
@@ -130,7 +130,7 @@ Exemple (auto-refresh 300s) :
 
     <p>Documentation du projet :</p>
     <p>
-      <a href="https://github.com/Dr-LaBulle/sovereign-hybrid-infra-showcase/">
+      <a href="https://github.com/Dr-LaBulle/platform-engineer-journey/">
         Accéder au dépôt ➔
       </a>
     </p>
