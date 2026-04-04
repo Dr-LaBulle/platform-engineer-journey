@@ -1,47 +1,69 @@
-# Runbook 03 — Stack Matrix (Swarm) avec création admin automatisée via Docker Secrets
+# Runbook 03 — Matrix Workbench (Docker Swarm) : Synapse + Nginx + secrets
 
 ## Objectif
-Déployer Synapse + Nginx + WireGuard en Docker Swarm et créer automatiquement l’utilisateur admin Synapse **sans mot de passe en clair** (Docker Secret).
+Déployer Synapse en Docker Swarm sur le LAB, exposer Matrix via Nginx (`:8080`), gérer les secrets proprement (sans mot de passe en clair), et garder la création d’admin manuelle.
 
-## Pré-requis
-- Docker Swarm initialisé (`docker swarm init`)
-- Node manager disponible
-- Domaine Matrix fonctionnel côté edge (Traefik)
+---
+
+## 1) Pré-requis
+
+- Docker Engine installé
+- Docker Swarm initialisé
 - Répertoire de travail: `/opt/workbench`
+- DNS/routage edge en place (ex: `matrix.flaow.eu` -> reverse proxy vers `http://10.100.0.2:8080`)
 
-## 1) Arborescence
-```text
-/opt/workbench/
-  stack.yml
-  .env
-  scripts/
-    init-admin.sh
-  synapse/data/
-  nginx/default.conf
-  wireguard/
-    wg_confs/wg0.conf
+Vérifier :
+```bash
+docker info | grep -i swarm
 ```
 
-## 2) Initialiser Synapse data (1ère fois)
+---
+
+## 2) Arborescence
+
+```text
+/opt/workbench/
+  .env
+  stack.yml
+  nginx/
+    default.conf
+  synapse/
+    data/
+```
+
+Créer :
 ```bash
-mkdir -p /opt/workbench/synapse/data
+mkdir -p /opt/workbench/{nginx,synapse/data}
+```
+
+---
+
+## 3) Initialiser Synapse (1ère installation uniquement)
+
+```bash
 docker run --rm -it \
   -v /opt/workbench/synapse/data:/data \
   -e SYNAPSE_SERVER_NAME=matrix.flaow.eu \
   -e SYNAPSE_REPORT_STATS=no \
   matrixdotorg/synapse:latest generate
+```
 
+Permissions recommandées :
+```bash
 sudo chown -R 991:991 /opt/workbench/synapse/data
 sudo chmod -R u+rwX,go-rwx /opt/workbench/synapse/data
 ```
 
-## 3) Créer les secrets Swarm
-```bash
-# mot de passe admin
-openssl rand -base64 32 | docker secret create synapse_admin_password -
+---
 
-# (optionnel) shared secret registration
+## 4) Créer les secrets Swarm
+
+```bash
+# shared secret (API admin / registration selon ton usage)
 openssl rand -hex 32 | docker secret create synapse_registration_shared_secret -
+
+# mot de passe SMTP (si email activé)
+printf '%s' 'REMPLACE_PAR_MDP_SMTP' | docker secret create synapse_smtp_pass -
 ```
 
 Vérifier :
@@ -49,151 +71,234 @@ Vérifier :
 docker secret ls
 ```
 
-## 4) Variables `.env`
+---
+
+## 5) Fichier `.env`
+
+Créer `/opt/workbench/.env` :
+
 ```env
 SYNAPSE_SERVER_NAME=matrix.flaow.eu
-SYNAPSE_ADMIN_USER=admin
+TZ=Europe/Zurich
 ```
 
-## 5) Stack Swarm `stack.yml`
+---
+
+## 6) Configuration complète Synapse (`/opt/workbench/synapse/data/homeserver.yaml`)
+
+> Tout le `homeserver.yaml` est regroupé ici.
+
+```yaml
+server_name: "matrix.flaow.eu"
+pid_file: /data/homeserver.pid
+report_stats: false
+
+listeners:
+  - port: 8008
+    tls: false
+    type: http
+    x_forwarded: true
+    resources:
+      - names: [client, federation]
+        compress: false
+
+database:
+  name: sqlite3
+  args:
+    database: /data/homeserver.db
+
+log_config: "/data/matrix.flaow.eu.log.config"
+media_store_path: /data/media_store
+signing_key_path: "/data/matrix.flaow.eu.signing.key"
+
+trusted_key_servers:
+  - server_name: "matrix.org"
+
+# Inscription (sans Google captcha)
+enable_registration: true
+enable_registration_without_verification: false
+registration_requires_token: true
+enable_registration_captcha: false
+
+# Vérification email (optionnel — décommenter si nécessaire)
+# registrations_require_3pid:
+#   - email
+# email:
+#   smtp_host: "smtp.example.com"
+#   smtp_port: 587
+#   smtp_user: "no-reply@flaow.eu"
+#   smtp_pass: "${SYNAPSE_SMTP_PASS}"
+#   require_transport_security: true
+#   notif_from: "Matrix <no-reply@flaow.eu>"
+```
+
+Notes :
+- Pas de mot de passe SMTP en clair.
+- Si email activé, `smtp_host` doit être réel et joignable.
+- Ne pas activer reCAPTCHA si tu ne veux pas Google.
+
+---
+
+## 7) Configuration Nginx (`/opt/workbench/nginx/default.conf`)
+
+```nginx
+server {
+  listen 8080;
+  server_name _;
+
+  location = /healthz {
+    return 200 "ok\n";
+    add_header Content-Type text/plain;
+  }
+
+  location /_matrix/ {
+    proxy_pass http://synapse:8008;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Port 443;
+
+    # CORS pour clients web
+    add_header Access-Control-Allow-Origin * always;
+    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "X-Requested-With, Content-Type, Authorization, Date" always;
+    if ($request_method = OPTIONS) { return 204; }
+  }
+
+  location /_matrix/federation/ {
+    proxy_pass http://synapse:8008;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Port 443;
+  }
+}
+```
+
+---
+
+## 8) Stack Swarm (`/opt/workbench/stack.yml`)
+
 ```yaml
 version: "3.9"
 
 secrets:
-  synapse_admin_password:
-    external: true
   synapse_registration_shared_secret:
     external: true
+  synapse_smtp_pass:
+    external: true
+
+networks:
+  matrix_backend:
+    driver: overlay
+    attachable: true
 
 services:
-  wireguard:
-    image: lscr.io/linuxserver/wireguard:latest
-    environment:
-      TZ: Europe/Zurich
-      PUID: "911"
-      PGID: "911"
-    cap_add:
-      - NET_ADMIN
-    volumes:
-      - /opt/workbench/wireguard:/config
-      - /lib/modules:/lib/modules:ro
-    sysctls:
-      - net.ipv4.conf.all.src_valid_mark=1
-    deploy:
-      placement:
-        constraints:
-          - node.role == manager
-
   synapse:
     image: matrixdotorg/synapse:latest
+    networks:
+      - matrix_backend
+    volumes:
+      - /opt/workbench/synapse/data:/data
+    secrets:
+      - synapse_registration_shared_secret
+      - synapse_smtp_pass
     environment:
       SYNAPSE_SERVER_NAME: ${SYNAPSE_SERVER_NAME}
       SYNAPSE_REPORT_STATS: "no"
-      TZ: Europe/Zurich
-    volumes:
-      - /opt/workbench/synapse/data:/data
-    network_mode: "service:wireguard"
-    depends_on:
-      - wireguard
+      TZ: ${TZ}
+    entrypoint:
+      - /bin/sh
+      - -lc
+      - |
+        export SYNAPSE_SMTP_PASS="$(cat /run/secrets/synapse_smtp_pass)";
+        exec /start.py
     deploy:
+      replicas: 1
       placement:
         constraints:
           - node.role == manager
 
   nginx:
     image: nginx:alpine
+    networks:
+      - matrix_backend
     volumes:
       - /opt/workbench/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
-    network_mode: "service:wireguard"
-    depends_on:
-      - synapse
+    ports:
+      - target: 8080
+        published: 8080
+        protocol: tcp
+        mode: host
     deploy:
+      replicas: 1
       placement:
         constraints:
           - node.role == manager
 ```
 
-## 6) Script init admin `scripts/init-admin.sh`
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
+---
 
-STACK_NAME="workbench"
-SYNAPSE_SERVICE="${STACK_NAME}_synapse"
-WIREGUARD_SERVICE="${STACK_NAME}_wireguard"
-MARKER="/opt/workbench/synapse/data/.admin_created"
-ADMIN_USER="${SYNAPSE_ADMIN_USER:-admin}"
+## 9) Déploiement
 
-if [ -f "$MARKER" ]; then
-  echo "[init-admin] Admin déjà créé, skip."
-  exit 0
-fi
-
-# Récupère un conteneur task en cours pour synapse et wireguard
-SYNAPSE_CID="$(docker ps --filter "name=${SYNAPSE_SERVICE}" --format '{{.ID}}' | head -n1)"
-WG_CID="$(docker ps --filter "name=${WIREGUARD_SERVICE}" --format '{{.ID}}' | head -n1)"
-
-if [ -z "$SYNAPSE_CID" ] || [ -z "$WG_CID" ]; then
-  echo "[init-admin] Conteneurs Swarm non trouvés."
-  exit 1
-fi
-
-echo "[init-admin] Attente Synapse..."
-for i in {1..60}; do
-  if docker exec "$WG_CID" sh -lc "wget -q -O- http://127.0.0.1:8008/_matrix/client/versions >/dev/null"; then
-    break
-  fi
-  sleep 2
-done
-
-# Lire secret Swarm via service temporaire (pattern sûr)
-PASS="$(docker run --rm --secret synapse_admin_password alpine:3.22 sh -lc 'cat /run/secrets/synapse_admin_password')"
-
-echo "[init-admin] Création admin ${ADMIN_USER}..."
-docker exec -i "$SYNAPSE_CID" register_new_matrix_user \
-  -u "$ADMIN_USER" \
-  -p "$PASS" \
-  -a \
-  -c /data/homeserver.yaml \
-  http://localhost:8008
-
-touch "$MARKER"
-chmod 600 "$MARKER"
-echo "[init-admin] OK"
-```
-
-Rendre exécutable :
-```bash
-chmod +x /opt/workbench/scripts/init-admin.sh
-```
-
-## 7) Déploiement
 ```bash
 cd /opt/workbench
 set -a; source .env; set +a
 docker stack deploy -c stack.yml workbench
 ```
 
-## 8) Lancer init admin (une seule fois)
-```bash
-cd /opt/workbench
-set -a; source .env; set +a
-/opt/workbench/scripts/init-admin.sh
-```
-
-## 9) Vérifications
+Vérifier :
 ```bash
 docker service ls
-docker service logs -f workbench_synapse
+docker service ps workbench_synapse
+docker service ps workbench_nginx
+docker service logs --tail=200 workbench_synapse
+```
+
+---
+
+## 10) Création admin manuelle
+
+```bash
+docker exec -it $(docker ps --filter name=workbench_synapse --format '{{.ID}}' | head -n1) \
+  register_new_matrix_user -c /data/homeserver.yaml http://localhost:8008
+```
+
+---
+
+## 11) Vérifications
+
+Depuis le LAB :
+```bash
+curl -i http://10.100.0.2:8080/healthz
+curl -i http://10.100.0.2:8080/_matrix/client/versions
+```
+
+Depuis Internet :
+```bash
 curl -i https://matrix.flaow.eu/_matrix/client/versions
 curl -i https://matrix.flaow.eu/_matrix/federation/v1/version
 ```
 
-## 10) Rotation du secret admin
-```bash
-openssl rand -base64 32 | docker secret create synapse_admin_password_v2 -
+---
 
-# Mettre à jour les services/automation pour consommer _v2 puis supprimer l’ancien
-docker secret rm synapse_admin_password
-docker secret ls
-```
+## 12) Dépannage rapide
+
+- `Ignoring unsupported options: network_mode`  
+  -> normal en stack Swarm, utiliser réseau overlay.
+
+- `No appropriate authentication flow found`  
+  -> flow client incompatible avec config (token/email/captcha).
+
+- `DNSLookupError ... ton-smtp`  
+  -> SMTP invalide (placeholder non remplacé).
+
+- `Failed to fetch` (Element)  
+  -> vérifier HTTPS, reverse proxy edge, CORS, endpoint `/_matrix/client/versions`.
+
+- `401 POST /_matrix/client/v3/register`  
+  -> souvent normal si token requis mais absent/invalide.
