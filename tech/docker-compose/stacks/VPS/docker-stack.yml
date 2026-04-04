@@ -1,0 +1,70 @@
+version: "3.8"
+
+secrets:
+  infomaniak_access_token:
+    external: true
+
+networks:
+  proxy:
+    driver: overlay
+    attachable: true
+
+services:
+  traefik:
+    image: traefik:v2.11
+    ports:
+      - target: 80
+        published: 80
+        protocol: tcp
+        mode: host
+      - target: 443
+        published: 443
+        protocol: tcp
+        mode: host
+    environment:
+      - ACME_EMAIL=${ACME_EMAIL}
+      - INFOMANIAK_ACCESS_TOKEN_FILE=/run/secrets/infomaniak_access_token
+    secrets:
+      - infomaniak_access_token
+    command:
+      - --providers.docker=true
+      - --providers.docker.swarmMode=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.file.directory=/dynamic
+      - --providers.file.watch=true
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.keytype=RSA4096
+      - --certificatesresolvers.le.acme.dnschallenge=true
+      - --certificatesresolvers.le.acme.dnschallenge.provider=infomaniak
+      - --certificatesresolvers.le.acme.dnschallenge.delaybeforecheck=30
+      - --certificatesresolvers.le.acme.dnschallenge.resolvers=1.1.1.1:53,8.8.8.8:53
+      - --log.level=INFO
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /opt/traefik/letsencrypt:/letsencrypt
+      - /opt/traefik/dynamic:/dynamic:ro
+    networks:
+      - proxy
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+
+  maintenance-page:
+    image: nginx:alpine
+    volumes:
+      - /opt/traefik/maintenance/index.html:/usr/share/nginx/html/index.html:ro
+    networks:
+      - proxy
+    deploy:
+      labels:
+        - traefik.enable=true
+        - traefik.http.services.matrix-maintenance-svc.loadbalancer.server.port=80
+        - traefik.http.routers.matrix-maintenance.rule=Host(`maintenance.example.net`)
+        - traefik.http.routers.matrix-maintenance.entrypoints=websecure
+        - traefik.http.routers.matrix-maintenance.tls=true
+        - traefik.http.routers.matrix-maintenance.tls.certresolver=le
+        - traefik.http.routers.matrix-maintenance.service=matrix-maintenance-svc

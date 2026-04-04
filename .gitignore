@@ -30,3 +30,6 @@ kubeconfig*
 .idea/
 Thumbs.db
 git_tree.ps1
+
+# --- Old_files ---
+old_*

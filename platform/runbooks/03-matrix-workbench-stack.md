@@ -1,47 +1,24 @@
-# WORKBENCH (LAB) — Runbook : WireGuard peer + Synapse + Nginx interne (backend unique)
+# Runbook 03 — Stack Matrix sur le workbench LAB (Synapse + Nginx via WireGuard)
 
 ## Objectif
-- Établir un tunnel WireGuard sortant depuis le lab (CGNAT) vers le VPS (Edge).
-- Fournir un backend unique dans le tunnel :
-  **http://10.100.0.2:8080**
-- Router le trafic Matrix via Nginx interne :
-  - `/_matrix/*` → Synapse :8008 (Client-Server)
-  - `/_matrix/federation/*` → Synapse :8008 (Federation, mode compatible workbench)
-- Éviter toute exposition de ports entrants publics sur le lab.
-
-## Plan d’adressage
-- **Réseau WireGuard : 10.100.0.0/30**
-  - VPS (wg0) : `10.100.0.1/30`
-  - LAB (wg0) : `10.100.0.2/30`
-- **Port WireGuard : UDP/51820** (sortant lab → VPS)
+Déployer la stack Matrix côté LAB sans exposition publique directe.
+Le VPS edge (Traefik) consomme le backend tunnelisé : `http://10.100.0.2:8080`.
 
 ## Pré-requis
-- Docker + Docker Compose disponibles sur la machine *workbench*.
-- Le flux sortant **UDP/51820** depuis le lab vers l’IP publique du VPS est autorisé.
-- Le répertoire `./synapse/data` contient une configuration Synapse valide (`homeserver.yaml` + clés).
-  - Si `./synapse/data` est vide, une initialisation Synapse est nécessaire avant démarrage.
+- Tunnel WireGuard opérationnel (runbook 01)
+- VPS Traefik Swarm opérationnel (runbook 02)
+- Répertoire Synapse prêt : `./synapse/data` (homeserver.yaml + clés)
 
-# 1) Arborescence (tout dans `/opt/workbench`)
-```
+## 1) Arborescence LAB
+```text
 /opt/workbench/
   compose.yaml
-  wireguard/
-    wg0.conf
-  synapse/
-    data/
-  nginx/
-    default.conf
+  wireguard/wg0.conf
+  synapse/data/
+  nginx/default.conf
 ```
 
-## Préparation (permissions)
-```bash
-mkdir -p /opt/workbench/wireguard /opt/workbench/synapse/data /opt/workbench/nginx
-chmod 0750 /opt/workbench /opt/workbench/wireguard /opt/workbench/synapse /opt/workbench/nginx
-touch /opt/workbench/wireguard/wg0.conf
-chmod 0600 /opt/workbench/wireguard/wg0.conf
-```
-
-# 2) WireGuard (LAB) : `/opt/workbench/wireguard/wg0.conf`
+## 2) WireGuard container `/opt/workbench/wireguard/wg0.conf`
 ```ini
 [Interface]
 Address = 10.100.0.2/30
@@ -55,11 +32,7 @@ AllowedIPs = 10.100.0.1/32
 PersistentKeepalive = 25
 ```
 
-## Notes importantes
-- Le peer côté VPS doit inclure `10.100.0.2/32` dans `AllowedIPs`.
-- Aucun port entrant n’est publié sur l’hôte du lab : tout passe dans le tunnel.
-
-# 3) Docker Compose (LAB) : `/opt/workbench/compose.yaml`
+## 3) Compose `/opt/workbench/compose.yaml`
 ```yaml
 services:
   wireguard:
@@ -85,7 +58,7 @@ services:
       - wireguard
     environment:
       - TZ=Europe/Zurich
-      - SYNAPSE_SERVER_NAME=matrix.example.tld
+      - SYNAPSE_SERVER_NAME=matrix.example.net
       - SYNAPSE_REPORT_STATS=no
     volumes:
       - ./synapse/data:/data
@@ -103,15 +76,14 @@ services:
     restart: unless-stopped
 ```
 
-# 4) Nginx (LAB) : `/opt/workbench/nginx/default.conf`
+## 4) Nginx `/opt/workbench/nginx/default.conf`
 ```nginx
 server {
   listen 8080;
   server_name _;
 
   location = /healthz {
-    return 200 "ok
-";
+    return 200 "ok\n";
     add_header Content-Type text/plain;
   }
 
@@ -137,42 +109,31 @@ server {
 }
 ```
 
-# 5) Déploiement / Ops
+## 5) Déploiement
 ```bash
 cd /opt/workbench
 docker compose up -d
 docker compose ps
 ```
 
-# 6) VPS (Edge) : routage Traefik attendu
-Router **matrix.example.tld** vers :
-```
-http://10.100.0.2:8080
-```
-
-# 7) Vérifications
-
-### WireGuard
+## 6) Vérifications
 ```bash
 docker exec -it wb-wireguard wg show
-```
-
-### Logs
-```bash
 docker logs -f wb-wireguard
 docker logs -f wb-synapse
 docker logs -f wb-nginx
 ```
 
-### Tests (depuis le VPS via tunnel)
+Depuis le VPS :
 ```bash
 curl -sS -I http://10.100.0.2:8080/healthz | head
 curl -sS -I http://10.100.0.2:8080/_matrix/client/versions | head
 curl -sS -I http://10.100.0.2:8080/_matrix/federation/v1/version | head
 ```
 
-## Point de cohérence Synapse (federation)
-- Vérifier `homeserver.yaml` : listeners, server_name, public_baseurl, x_forwarded.
-- Vérifier headers Nginx.
-- Tester endpoint federation.
-- Utiliser valideur externe si besoin.
+## 7) Cohérence Synapse
+Vérifier `homeserver.yaml` :
+- `server_name`
+- `public_baseurl`
+- listeners
+- `x_forwarded: true` (si applicable)
